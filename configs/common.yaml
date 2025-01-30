@@ -1,0 +1,43 @@
+# Experiment Setup
+exp_id: ''  # Experiment id (required)
+task: pretext  # Task name
+dataset: ''  # Dataset Name (required)
+out_path: ./outputs/  # Output path
+log_path: logs/  # Log path
+weight_path: weights/  # Weight path
+log_name: FL.log  # Log name
+
+# Data Loading
+train_split: 0.0  # Dataset split size
+train_set: train  # Make val set as a train dataset
+batch_size: 64  # Batch size
+eval_batch_size: 64  # Batch size for evaluation
+workers: 16  # Number of data loading workers
+
+# Model Configuration
+backbone: resnet50  # Backbone model name
+backbone_weights: null  # Init backbone model with pretrained weights
+weights: null  # The weights enum name to load
+trainable_backbone_layers: null  # Number of trainable layers of backbone
+
+# Training Hyperparameters
+epochs: 90  # Number of total epochs to run
+lr: 0.0001  # Learning rate
+opt: adamw  # Optimizer
+momentum: 0.9  # Momentum
+wd: 0.0001  # Weight decay
+lr_scheduler: cosineannealinglr  # LR scheduler
+lr_step_size: 30  # Decrease lr every step-size epochs
+lr_gamma: 0.1  # Decrease lr by a factor of lr-gamma
+lr_min: 0.0  # Minimum lr of lr schedule
+
+# System Settings
+seed: 42  # Seed
+device: cuda:0  # Device (cpu, cuda:0)
+client_id: 0  # Client ID
+interpolation: bilinear  # Interpolation method
+backend: pil  # PIL or tensor
+use_v2: false  # Use V2 transforms
+resume: ''  # Path of checkpoint
+start_epoch: 0  # Start epoch
+test_only: false  # Only test the model

@@ -1,0 +1,27 @@
+# Model Configuration
+model: resnet50  # Model name
+requires-grad-backbone: true  # Requires grad for backbone
+
+# Regularization
+norm-weight-decay: null  # Weight decay for normalization layers
+bias-weight-decay: null  # Weight decay for bias parameters
+label-smoothing: 0.0  # Label smoothing
+
+# Training Parameters
+aspect-ratio-group-factor: 3  # Aspect ratio group factor
+rpn-score-thresh: null  # RPN score threshold for faster-rcnn
+data-augmentation: hflip  # Data augmentation policy
+sync-bn: false  # Use sync batch norm
+use-deterministic-algorithms: false  # Use deterministic algorithms only
+auto-augment: null  # Auto augment policy
+ra-magnitude: 9  # Magnitude of auto augment policy
+augmix-severity: 3  # Severity of augmix policy
+train-crop-size: 224  # Random crop size used for training
+amp: false  # Use torch.cuda.amp for mixed precision training
+clip-grad-norm: null  # Maximum gradient norm
+ra-sampler: false  # Use Repeated Augmentation in training
+ra-reps: 3  # Number of repetitions for Repeated Augmentation
+
+# Validation Settings
+val-resize-size: 256  # Resize size used for validation
+val-crop-size: 224  # Central crop size used for validation

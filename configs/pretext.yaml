@@ -1,0 +1,13 @@
+# Pretext Task Settings
+pretext-method: sim_clr  # Pretext method
+projection-size: 256  # Projection size
+temperature: 0.07  # Temperature
+
+# Data Augmentation
+resize-size: 256  # Resize size used for training
+crop-size: 224  # Random crop size used for training
+random-erase: 0.0  # Random erasing probability
+random-grayscale: 0.2  # Random grayscale probability
+random-apply: 0.2  # Random apply probability
+blur-kernel-size: 9  # Blur kernel size
+hflip: 0.5  # Random Horizontal Flip probability

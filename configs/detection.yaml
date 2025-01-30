@@ -1,0 +1,32 @@
+# Model Configuration
+model: resnet50  # Model name
+
+# Regularization
+norm-weight-decay: null  # Weight decay for Normalization layers (default: None, same value as --wd)
+bias-weight-decay: null  # Weight decay for bias parameters of all layers (default: None, same value as --wd)
+label-smoothing: 0.0  # Label smoothing (default: 0.0)
+
+# Learning Rate Schedule
+lr-steps: [16, 22]  # Decrease lr every step-size epochs (multisteplr scheduler only)
+
+# Training Parameters
+aspect-ratio-group-factor: 3  # Aspect ratio group factor for data loader
+rpn-score-thresh: null  # RPN score threshold for faster-rcnn
+data-augmentation: hflip  # Data augmentation policy (default: hflip)
+sync-bn: false  # Use sync batch norm
+use-deterministic-algorithms: false  # Forces the use of deterministic algorithms only.
+random-erase: 0.0  # Random erasing probability (default: 0.0)
+auto-augment: null  # Auto augment policy (default: None)
+ra-magnitude: 9  # Magnitude of auto augment policy
+augmix-severity: 3  # Severity of augmix policy
+train-crop-size: 224  # The random crop size used for training (default: 224)
+
+# Validation Settings
+val-resize-size: 256  # The resize size used for validation (default: 256)
+val-crop-size: 224  # The central crop size used for validation (default: 224)
+
+# Mixed Precision Training
+amp: false  # Use torch.cuda.amp for mixed precision training
+clip-grad-norm: null  # The maximum gradient norm (default None)
+ra-sampler: false  # Whether to use Repeated Augmentation in training
+ra-reps: 3  # Number of repetitions for Repeated Augmentation (default: 3)

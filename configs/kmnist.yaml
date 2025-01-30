@@ -1,0 +1,12 @@
+local_epochs: 1
+batch_size: 64 
+criterion: CrossEntropyLoss
+criterion_config:
+  - reduction: 'none' 
+    beta: 2 
+optimizer: SGD
+optim_config: 
+  - lr: 0.01
+    momentum: 0.9
+dataset_name: 'KMNIST'
+min_free_memory: 4096

@@ -1,0 +1,20 @@
+# Model Configuration
+model: resnet50  # Model name
+
+# Loss Function
+aux-loss: false  # Auxiliary loss
+
+# Learning Rate Warmup
+lr-warmup-epochs: 0  # Number of epochs to warmup
+lr-warmup-method: linear  # Warmup method
+lr-warmup-decay: 0.01  # Decay for lr
+
+# Output and Logging
+print-freq: 10  # Print frequency
+output-dir: .  # Path to save outputs
+
+# System Settings
+use-deterministic-algorithms: false  # Forces the use of deterministic algorithms only
+
+# Mixed Precision Training
+amp: false  # Use torch.cuda.amp for mixed precision training

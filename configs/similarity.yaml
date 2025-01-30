@@ -1,0 +1,10 @@
+# Dataset Settings
+dataset-dir: /tmp/fmnist/  # FashionMNIST dataset directory path
+labels-per-batch: 8  # Number of unique labels/classes per batch
+samples-per-label: 8  # Number of samples per label in a batch
+
+# Loss Function
+margin: 0.2  # Triplet loss margin
+
+# System Settings
+use-deterministic-algorithms: false  # Forces the use of deterministic algorithms only
