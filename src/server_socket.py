@@ -134,7 +134,7 @@ def handle_client_update(sid, data):
 parser = argparse.ArgumentParser()
 parser.add_argument('--host', type=str, default='dilab2.ssu.ac.kr', help='host')
 parser.add_argument('--port', type=int, default=5001, help='port')
-parser.add_argument("-d", "--datasets", type=str, nargs='+', default=["MNIST", "EMNIST"],
+parser.add_argument("-d", "--datasets", type=str, nargs='+', default=["MNIST", "EMNIST", "KMNIST", "QMNIST", "EMNIST", "KMNIST"],
                         help='Specify the datasets.')
 parser.add_argument("-p", "--project", type=str, default="MTL_CL_TASK", help = "Project name")
 parser.add_argument("-c", "--client_fraction", type=float, default=1.0, help = "client fraction")

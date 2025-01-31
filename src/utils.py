@@ -150,6 +150,12 @@ def create_datasets(num_clients=10, dataset_name='MNIST', data_path='./data/'):
     elif dataset_name == 'KMNIST':
         train_dataset = datasets.KMNIST(root=data_path, train=True, download=True, transform=transform)
         test_dataset = datasets.KMNIST(root=data_path, train=False, download=True, transform=transform)
+    elif dataset_name == 'QMNIST':
+        train_dataset = datasets.KMNIST(root=data_path, train=True, download=True, transform=transform)
+        test_dataset = datasets.KMNIST(root=data_path, train=False, download=True, transform=transform)
+    elif dataset_name == 'FakeData':
+        train_dataset = datasets.FakeData(size=60000, image_size=(28, 28), num_classes=10, transform=transform)
+        test_dataset = datasets.FakeData(size=5000, image_size=(28, 28), num_classes=10, transform=transform)
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 

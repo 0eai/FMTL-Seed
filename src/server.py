@@ -76,10 +76,50 @@ class Server(object):
         # Send global model to selected clients
         model_state_dict = serialize_model(self.model)
         
+        # Reset pending_acks for this round
+        self.pending_acks = {
+            sid: self.clients[sid]["client_id"]
+            for sid in self.selected_clients.keys()
+        }
+        
+        # Send the model to each client with a callback for ACK
         for sid in self.selected_clients.keys():
-            sio.emit('model', data=model_state_dict, room=sid)
-            print(f"[Round: {str(self._round).zfill(4)}] ...successfully transmitted model to client {self.clients[sid]['client_id']}!")
+            sio.emit(
+                "model",
+                data=model_state_dict,
+                room=sid,
+                # Capture all callback arguments (*args) and pass `sid` and `sio`
+                callback=lambda *args, sid=sid: self.handle_model_ack(*args, sid=sid, sio=sio)
+            )
+            print(f"[Round: {self._round}] Sent model to client {self.clients[sid]['client_id']}")
 
+    def handle_model_ack(self, *args, sid, sio):
+        """Handle both transport errors and client-reported errors."""
+        # Check if the first argument is a transport error (e.g., timeout)
+        transport_error = next((arg for arg in args if isinstance(arg, Exception)), None)
+        
+        client_id = self.clients[sid]["client_id"]
+        
+        if transport_error:
+            # Transport-level failure (e.g., network timeout)
+            print(f"[Round: {self._round}] ❌ Failed to transmit model to client {client_id}: {transport_error}")
+        else:
+            # Client-reported error (sent via ack({'error': ...}))
+            client_data = args[0] if args else None
+            if client_data and "error" in client_data:
+                print(f"[Round: {self._round}] ❌ Client {client_id} failed to load model: {client_data['error']}")
+            else:
+                print(f"[Round: {self._round}] ✅ Client {client_id} confirmed model receipt.")
+        
+        # Remove client from pending ACKs
+        if sid in self.pending_acks:
+            del self.pending_acks[sid]
+        
+        # Proceed if all clients have acknowledged
+        if not self.pending_acks:
+            print(f"[Round: {self._round}] All clients acknowledged model receipt.")
+            self.update_selected_clients(sio)
+        
     def sample_clients(self):
         """Select some fraction of all clients."""
         print(f"[Round: {str(self._round).zfill(4)}] Select clients...!")
@@ -137,7 +177,7 @@ class Server(object):
         self.transmit_model(sio)
 
         # updated selected clients with local dataset
-        self.update_selected_clients(sio)
+        # self.update_selected_clients(sio)
         
     def aggregate_updates(self):
         # calculate averaging coefficient of weights

@@ -55,9 +55,7 @@ class Client(object):
         print('self.criterion_config', type(self.criterion_config), self.criterion_config)
         
 
-    def client_update(self, round, device=None):
-        if device != None:
-            self.device = torch.device(device)
+    def client_update(self, round):
         self.model.train()
         self.model.to(self.device)
 
@@ -74,13 +72,11 @@ class Client(object):
                 loss.backward()
                 optimizer.step() 
 
-                if self.device.type == "cuda": torch.cuda.empty_cache()       
+                # if self.device.type == "cuda": torch.cuda.empty_cache()       
         print(f"\t[Client {str(self.id).zfill(4)}] ...finished training for round {str(round).zfill(4)}")        
         self.model.to("cpu")
 
-    def client_evaluate(self, round, device=None):
-        if device != None:
-            self.device = torch.device(device)
+    def client_evaluate(self, round):
         self.model.eval()
         self.model.to(self.device)
 
@@ -95,7 +91,7 @@ class Client(object):
                 predicted = outputs.argmax(dim=1, keepdim=True)
                 correct += predicted.eq(labels.view_as(predicted)).sum().item()
 
-                if self.device.type == "cuda": torch.cuda.empty_cache()
+                # if self.device.type == "cuda": torch.cuda.empty_cache()
         self.model.to("cpu")
 
         test_loss = test_loss / len(self.dataloader)

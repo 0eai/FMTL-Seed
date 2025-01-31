@@ -58,19 +58,29 @@ def client_setup(client_cfg):
     device = torch.device(client_cfg.device)
     client = Client(client_id=client_id, local_data=train_dataset, device=device)
     client.model = TwoNN()
-    client_config = ClientConfig() 
     client.setup(client_config=client_cfg)
     
     sio.emit('client_setup', data={"client_id": client_id})
 
 @sio.on('model')
-def on_model(data):
-    # Deserialize the model
-    state_dict = deserialize_model(data)
-    client.model.load_state_dict(state_dict)
-    # Store the initial state_dict for computing updates
-    client.initial_state_dict = {key: value.clone() for key, value in state_dict.items()}
+def on_model(data, ack=None):
+    """Acknowledge model receipt after validation."""
     print(f'[Client({client.id})] Received model from server')
+    try:
+        # Deserialize the model
+        print(f'[Client({client.id})] Deserializing model')
+        state_dict = deserialize_model(data)
+        print(f'[Client({client.id})] Loading model state_dict')
+        client.model.load_state_dict(state_dict)
+        # Store the initial state_dict for computing updates
+        client.initial_state_dict = {key: value.clone() for key, value in state_dict.items()}
+        
+        print(f"[Client({client.id})] Model loaded successfully.")
+        if ack:  # Send ACK only if the server expects it
+            ack()
+    except Exception as e:
+        print(f"[Client({client.id})] Model load failed: {e}")
+        ack({"error": str(e)})  # Send error to server
 
 @sio.on('client_update')
 def on_client_update(data):
@@ -119,23 +129,6 @@ def on_training_complete():
     # Perform any cleanup if necessary
     sio.disconnect()
     
-class ClientConfig:
-    def __init__(self, 
-                 local_epochs=1, 
-                 batch_size=64, 
-                 criterion=torch.nn.CrossEntropyLoss, 
-                 criterion_config={'reduction': 'none', 'beta': 2}, 
-                 optimizer=torch.optim.SGD, 
-                 optim_config={'lr': 0.01, 'momentum': 0.9}, 
-                 dataset_name='MNIST'):
-        self.local_epochs = local_epochs
-        self.batch_size = batch_size
-        self.criterion = criterion
-        self.criterion_config = criterion_config
-        self.optimizer = optimizer
-        self.optim_config = optim_config
-        self.dataset_name = dataset_name
-        
         
 if __name__ == '__main__':
     # import multiprocessing as mp
