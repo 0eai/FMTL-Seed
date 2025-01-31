@@ -132,7 +132,7 @@ def handle_client_update(sid, data):
         print(f"[Server] Ignoring update from unselected client {sid}")
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--host', type=str, default='dilab2.ssu.ac.kr.', help='host')
+parser.add_argument('--host', type=str, default='dilab2.ssu.ac.kr', help='host')
 parser.add_argument('--port', type=int, default=5001, help='port')
 parser.add_argument("-d", "--datasets", type=str, nargs='+', default=["MNIST", "EMNIST"],
                         help='Specify the datasets.')

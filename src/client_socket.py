@@ -142,7 +142,7 @@ if __name__ == '__main__':
     # mp.set_start_method("spawn", force=True)
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--host', type=str, default='dilab2.ssu.ac.kr.', help='host')
+    parser.add_argument('--host', type=str, default='dilab2.ssu.ac.kr', help='host')
     parser.add_argument('--port', type=int, default=5001, help='port')
     parser.add_argument('--client_id', type=int, default=0, help='Client ID')
     parser.add_argument('--num_clients', type=int, default=2, help='Total number of clients')
