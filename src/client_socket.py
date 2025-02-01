@@ -35,8 +35,7 @@ def connect():
 
 @sio.event
 def disconnect(reason=None):
-    print(f'[Client({client_id})] Disconnected from server')
-    sio.disconnect()
+    print(f'[Client({client_id})] Disconnected: {reason}')
     os._exit(0)
     
 @sio.on('join_ack')
@@ -44,23 +43,34 @@ def on_join_ack(data):
     global client_cfg
     print(f'[Client({client_id})] Received acknowledgment from server:', data)
     
-    client_cfg = Config(**data)
+    try:
+        assert 'dataset_name' in data and 'min_free_memory' in data
+        client_cfg = Config(**data)
+    except (AssertionError, TypeError) as e:
+        print(f"[Client({client_id})] Invalid join_ack data: {e}")
+        sio.disconnect()
+        
     client_setup(client_cfg)
     os.makedirs(client_cfg.weight_path, exist_ok=True)
     os.makedirs(client_cfg.log_path, exist_ok=True)
     
 
 def client_setup(client_cfg):
-    global client
-    train_dataset, test_dataset = create_datasets(num_clients=num_clients, dataset_name=client_cfg.dataset_name)
-    
-    #torch.cuda.set_device(0)
-    device = torch.device(client_cfg.device)
-    client = Client(client_id=client_id, local_data=train_dataset, device=device)
-    client.model = TwoNN()
-    client.setup(client_config=client_cfg)
-    
-    sio.emit('client_setup', data={"client_id": client_id})
+    try:
+        global client
+        train_dataset, test_dataset = create_datasets(num_clients=num_clients, dataset_name=client_cfg.dataset_name)
+        
+        #torch.cuda.set_device(0)
+        device = torch.device(client_cfg.device)
+        client = Client(client_id=client_id, local_data=train_dataset, device=device)
+        client.model = TwoNN()
+        client.setup(client_config=client_cfg)
+        
+        sio.emit('client_setup', data={"client_id": client_id})
+        print(f"[Client({client.id})] ✅ Client setup completed.")
+    except Exception as e:
+        print(f"[Client({client_id})] ❌ Setup failed: {e}")
+        sio.emit('client_error', {'client_id': client_id, 'error': str(e)})
 
 @sio.on('model')
 def on_model(data, ack=None):
@@ -75,57 +85,69 @@ def on_model(data, ack=None):
         # Store the initial state_dict for computing updates
         client.initial_state_dict = {key: value.clone() for key, value in state_dict.items()}
         
-        print(f"[Client({client.id})] Model loaded successfully.")
+        print(f"[Client({client.id})] ✅ Model loaded successfully.")
         if ack:  # Send ACK only if the server expects it
             ack()
     except Exception as e:
         print(f"[Client({client.id})] Model load failed: {e}")
-        ack({"error": str(e)})  # Send error to server
+        if ack:  # Check if acknowledgment is expected
+            ack({"error": str(e)})
+        else:
+            sio.emit('client_error', {'client_id': client.id, 'error': str(e)})
 
 @sio.on('client_update')
 def on_client_update(data):
-    round = data['round']
-    client.client_update(round=round)
-    print(f'[Client({client.id})] Local training complete')
-    test_loss, test_accuracy = client.client_evaluate(round=round)
-    print(f'[Client({client.id})] Local evaluation complete')
+    try:
+        round = data['round']
+        client.client_update(round=round)
+        print(f'[Client({client.id})] Local training complete')
+        test_loss, test_accuracy = client.client_evaluate(round=round)
+        print(f'[Client({client.id})] Local evaluation complete')
 
-    # Compute model update
-    model_update = client.compute_model_update()
-    # Ensure tensors are on CPU before serialization
-    for key in model_update:
-        model_update[key] = model_update[key].to('cpu')
-    # Serialize model update
-    update_data = serialize_tensor_dict(model_update)
-    
-    payload = {
-        'client_id': client.id,
-        'round': round,
-        'dataset_size': len(client),
-        'model_update': update_data,
-        'loss': test_loss,
-        'accuracy': test_accuracy,
-    }
-    
-    sio.emit('client_update', data=payload)
-    print(f'[Client({client.id})] Sent updated model to server')
+        # Compute model update
+        model_update = client.compute_model_update()
+        # Ensure tensors are on CPU before serialization
+        for key in model_update:
+            model_update[key] = model_update[key].to('cpu')
+        # Serialize model update
+        update_data = serialize_tensor_dict(model_update)
+        
+        payload = {
+            'client_id': client.id,
+            'round': round,
+            'dataset_size': len(client),
+            'model_update': update_data,
+            'loss': test_loss,
+            'accuracy': test_accuracy,
+        }
+        
+        sio.emit('client_update', data=payload)
+        print(f'[Client({client.id})] ✅ Sent updated model to server')
+    except Exception as e:
+        print(f"[Client({client.id})] ❌ Error in client_update: {e}")
+        sio.emit('client_error', {'client_id': client.id, 'error': str(e)})
 
 @sio.on('client_evaluate') 
 def on_client_evaluate(data):
-    round = data['round']
-    test_loss, test_accuracy = client.client_evaluate(round=round)
-    print(f'[Client({client.id})] Local evaluation complete')
-    payload = {
-        'client_id': client.id,
-        'round': round,
-        'loss': test_loss,
-        'accuracy': test_accuracy,
-    }
-    sio.emit('client_evaluate', data=payload)
+    try:
+        round = data['round']
+        test_loss, test_accuracy = client.client_evaluate(round=round)
+        print(f'[Client({client.id})] Local evaluation complete')
+        payload = {
+            'client_id': client.id,
+            'round': round,
+            'loss': test_loss,
+            'accuracy': test_accuracy,
+        }
+        sio.emit('client_evaluate', data=payload)
+        print(f'[Client({client.id})] ✅ Sent eval metrices to server')
+    except Exception as e:
+        print(f"[Client({client.id})] ❌ Error in client_update: {e}")
+        sio.emit('client_error', {'client_id': client.id, 'error': str(e)})
 
 @sio.on('training_complete')
 def on_training_complete():
-    print(f'[Client({client.id})] Training complete. Disconnecting...')
+    print(f'[Client({client.id})] ✅ Training complete. Disconnecting...')
     # Perform any cleanup if necessary
     sio.disconnect()
     
@@ -157,7 +179,7 @@ if __name__ == '__main__':
 
     # Connect to server
     try:
-        sio.connect(f'http://{args.host}:{args.port}')
+        sio.connect(f'http://{args.host}:{args.port}', wait_timeout=10)
         while sio.connected:
             sio.sleep(1)  # Prevents high CPU usage while waiting
     except socketio.exceptions.ConnectionError:
