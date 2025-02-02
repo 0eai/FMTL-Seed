@@ -6,6 +6,7 @@ import torch
 import argparse
 import random
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 
 from src.models import TwoNN
 from src.utils import Logger, create_datasets, deserialize_model, serialize_tensor_dict, Config, get_system_resources
@@ -22,6 +23,8 @@ torch.use_deterministic_algorithms(False)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+executor = ThreadPoolExecutor(max_workers=1)
+
 # Initialize Socket.IO client
 sio = socketio.Client()
 
@@ -36,7 +39,6 @@ def connect():
 @sio.event
 def disconnect(reason=None):
     print(f'[Client({client_id})] Disconnected: {reason}')
-    os._exit(0)
     
 @sio.on('join_ack')
 def on_join_ack(data):
@@ -97,35 +99,37 @@ def on_model(data, ack=None):
 
 @sio.on('client_update')
 def on_client_update(data):
-    try:
-        round = data['round']
-        client.client_update(round=round)
-        print(f'[Client({client.id})] Local training complete')
-        test_loss, test_accuracy = client.client_evaluate(round=round)
-        print(f'[Client({client.id})] Local evaluation complete')
+    def _process_update():
+        try:
+            round = data['round']
+            client.client_update(round=round)
+            print(f'[Client({client.id})] Local training complete')
+            test_loss, test_accuracy = client.client_evaluate(round=round)
+            print(f'[Client({client.id})] Local evaluation complete')
 
-        # Compute model update
-        model_update = client.compute_model_update()
-        # Ensure tensors are on CPU before serialization
-        for key in model_update:
-            model_update[key] = model_update[key].to('cpu')
-        # Serialize model update
-        update_data = serialize_tensor_dict(model_update)
-        
-        payload = {
-            'client_id': client.id,
-            'round': round,
-            'dataset_size': len(client),
-            'model_update': update_data,
-            'loss': test_loss,
-            'accuracy': test_accuracy,
-        }
-        
-        sio.emit('client_update', data=payload)
-        print(f'[Client({client.id})] ✅ Sent updated model to server')
-    except Exception as e:
-        print(f"[Client({client.id})] ❌ Error in client_update: {e}")
-        sio.emit('client_error', {'client_id': client.id, 'error': str(e)})
+            # Compute model update
+            model_update = client.compute_model_update()
+            # Ensure tensors are on CPU before serialization
+            for key in model_update:
+                model_update[key] = model_update[key].to('cpu')
+            # Serialize model update
+            update_data = serialize_tensor_dict(model_update)
+            
+            payload = {
+                'client_id': client.id,
+                'round': round,
+                'dataset_size': len(client),
+                'model_update': update_data,
+                'loss': test_loss,
+                'accuracy': test_accuracy,
+            }
+            
+            sio.emit('client_update', data=payload)
+            print(f'[Client({client.id})] ✅ Sent updated model to server')
+        except Exception as e:
+            print(f"[Client({client.id})] ❌ Error in client_update: {e}")
+            sio.emit('client_error', {'client_id': client.id, 'error': str(e)})
+    executor.submit(_process_update)
 
 @sio.on('client_evaluate') 
 def on_client_evaluate(data):
@@ -179,11 +183,10 @@ if __name__ == '__main__':
 
     # Connect to server
     try:
-        sio.connect(f'http://{args.host}:{args.port}', wait_timeout=10)
-        while sio.connected:
-            sio.sleep(1)  # Prevents high CPU usage while waiting
+        sio.connect(f'http://{args.host}:{args.port}', wait_timeout=10, transports=['websocket'])
+        sio.wait()  # Use built-in event loop
     except socketio.exceptions.ConnectionError:
         print(f'[Client({client_id})] Connection to server failed.')
     finally:
         print(f'[Client({client_id})] Client has disconnected. Exiting...')
-        os._exit(0)  # Ensures complete shutdown without traceback
+        sys.exit(0)
