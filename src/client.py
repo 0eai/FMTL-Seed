@@ -43,10 +43,10 @@ class Client(object):
         self.dataloader = DataLoader(self.data, batch_size=client_config.batch_size, shuffle=True, num_workers=client_config.batch_size//4)
         
         self.local_epochs = client_config.local_epochs
-        self.criterion = getattr(torch.nn, client_config.criterion)
-        self.optimizer = getattr(torch.optim, client_config.optimizer)
-        self.optim_config = client_config.optim_config[0]
-        self.criterion_config = client_config.criterion_config[0]
+        self.criterion = getattr(torch.nn, client_config.criterion.type)
+        self.optimizer = getattr(torch.optim, client_config.optimizer.type)
+        self.optim_config = client_config.optimizer.config
+        self.criterion_config = client_config.criterion.config
         
         print('self.optimizer', type(self.optimizer), self.optimizer)
         print('self.criterion', type(self.criterion), self.criterion)
@@ -59,8 +59,8 @@ class Client(object):
         self.model.train()
         self.model.to(self.device)
 
-        optimizer = self.optimizer(self.model.parameters(), **self.optim_config)
-        print(f"\t[Client {str(self.id).zfill(4)}] ...started training for round {str(round).zfill(4)}")
+        optimizer = self.optimizer(self.model.parameters(), **self.optim_config.model_dump())
+        print(f"\t[Client {str(self.id).zfill(4)} | Round {str(round).zfill(4)}] ...started training")
         for e in range(self.local_epochs):
             for data, labels in self.dataloader:
                 data, labels = data.float().to(self.device), labels.long().to(self.device)
@@ -73,7 +73,7 @@ class Client(object):
                 optimizer.step() 
 
                 # if self.device.type == "cuda": torch.cuda.empty_cache()       
-        print(f"\t[Client {str(self.id).zfill(4)}] ...finished training for round {str(round).zfill(4)}")        
+        print(f"\t[Client {str(self.id).zfill(4)} | Round {str(round).zfill(4)}] ...finished training")        
         self.model.to("cpu")
 
     def client_evaluate(self, round):
@@ -82,7 +82,7 @@ class Client(object):
 
         test_loss, correct = 0, 0
         with torch.no_grad():
-            print(f"\t[Client {str(self.id).zfill(4)}] ...started evaluation for round {str(round).zfill(4)}")
+            print(f"\t[Client {str(self.id).zfill(4)} | Round {str(round).zfill(4)}] ...started evaluation")
             for data, labels in self.dataloader:
                 data, labels = data.float().to(self.device), labels.long().to(self.device)
                 outputs = self.model(data)
@@ -97,7 +97,7 @@ class Client(object):
         test_loss = test_loss / len(self.dataloader)
         test_accuracy = correct / len(self.data)
 
-        print(f"\t[Client {str(self.id).zfill(4)}] ...finished evaluation for round {str(round).zfill(4)}!\
+        print(f"\t[Client {str(self.id).zfill(4)} | Round {str(round).zfill(4)}] ...finished evaluation!\
             \n\t=> Test loss: {test_loss:.4f}\
             \n\t=> Test accuracy: {100. * test_accuracy:.2f}%\n")
 

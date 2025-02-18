@@ -1,0 +1,422 @@
+
+# server_socket.py
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
+import argparse
+import wandb
+import socketio
+from collections import OrderedDict
+import torch
+import numpy as np
+import random
+from datetime import datetime
+from dateutil import tz
+from pathlib import Path
+
+from src.server import Server
+from src.utils import parse_server_args, Logger, create_datasets, serialize_model, deserialize_model, deserialize_tensor_dict, read_yaml, get_available_gpu_number, Config
+
+
+# Initialize Socket.IO server
+sio = socketio.Server()
+app = socketio.WSGIApp(sio)
+
+def read_config(data, args):
+    dataset = server.datasets[len(server.clients) -1]
+    client_cfg = read_yaml(f'configs/{dataset.lower()}.yaml')
+    client_cfg.project = args.project
+    client_cfg.run_id = args.run_id
+    client_cfg.out_path = args.out_path
+    client_cfg.weight_path = f"{args.out_path}/clients/{dataset}/checkpoints/"
+    client_cfg.log_path = f"{args.out_path}/clients/{dataset}/logs/"
+    
+    client_cfg.train_split = args.train_split
+    client_cfg.train_set = args.train_set
+    
+    if data['cuda_available'] == True:
+        gpu_number = get_available_gpu_number(server.clients, sid)
+        if gpu_number is not None:
+            client_cfg.device = f'cuda:{gpu_number}'
+            print(f"Assigned GPU {gpu_number} to client {data['client_id']} (IP: {server.clients[sid]['ip_address']})")
+        else:
+            client_cfg.device = 'cpu'  # Fallback to CPU
+            print(f"No suitable GPU found for client {data['client_id']} (IP: {server.clients[sid]['ip_address']}), using CPU.")
+    else:
+        client_cfg.device = 'cpu'
+        print(f"Client {data['client_id']} does not have CUDA available, using CPU.")
+    
+    return client_cfg
+    
+def transmit_global_model():
+        # Send global model to selected clients
+        model_state_dict = serialize_model(server.model)
+        
+        # Send the model to each client with a callback for ACK
+        for sid in server.selected_clients.keys():
+            sio.emit("model", data=model_state_dict, room=sid)
+            print(f"[Round: {server._round}] Sent model to client {server.clients[sid]['client_id']}")
+
+def fit_one_round():
+    """Execute the whole process of one round of training."""
+    if server._round < server.num_rounds:
+        server._round += 1
+        
+        # train federated model
+        server.sample_clients()
+        
+        """Send the updated global model to selected/all clients."""
+        transmit_global_model()
+        
+        """Call "client_update" function of each selected client."""
+        print(f"[Round: {str(server._round).zfill(4)}] Start updating selected {len(server.selected_clients)} clients...!")
+        for sid in server.selected_clients.keys():
+            sio.emit('client_update', data={'round': server._round}, room=sid)
+        print(f"[Round: {str(server._round).zfill(4)}] ...{len(server.selected_clients)} clients are selected and updated!")
+    else:
+        print("\n[Server] Training complete")
+        for sid in server.clients.keys():
+            sio.emit('training_complete', room=sid)
+
+
+# Event handlers
+@sio.event
+def connect(sid, environ):
+    client_ip = environ.get('REMOTE_ADDR')
+    forwarded_for = environ.get('HTTP_X_FORWARDED_FOR')
+
+    if forwarded_for:
+        # X-Forwarded-For might contain multiple IPs; take the first one
+        client_ip = forwarded_for.split(',')[0].strip()
+    elif environ.get('HTTP_X_REAL_IP'):
+        client_ip = environ.get('HTTP_X_REAL_IP')
+
+    print(f'Client connected: {sid} from {client_ip}')
+    # Store the IP address temporarily, we'll merge it later in handle_join_request
+    sio.save_session(sid, {'ip_address': client_ip}) 
+
+@sio.event
+def disconnect(sid):
+    print('Client disconnected:', sid)
+    if sid in server.clients:
+        del server.clients[sid]
+    if sid in server.selected_clients:
+        del server.selected_clients[sid]
+
+@sio.on('join_request')
+def handle_join_request(sid, data):
+    print('Client requested to join:', sid, data)
+
+    # Retrieve the saved session data, including the IP address
+    session_data = sio.get_session(sid)
+    client_ip = session_data.get('ip_address')
+
+    # Merge the IP address with the incoming data
+    merged_data = data.copy()  
+    merged_data['ip_address'] = client_ip
+
+    # Store the merged data in server.clients
+    server.clients[sid] = merged_data
+        
+    dataset = server.datasets[len(server.clients) -1]
+    client_cfg = read_config(data, args)
+    
+    # Convert client_cfg to a dictionary if necessary
+    if not isinstance(client_cfg, dict):
+        client_cfg = vars(client_cfg)  # Assuming client_cfg is an object with attributes
+    
+    sio.emit('join_ack', data=client_cfg, room=sid)
+
+
+@sio.on('client_setup')
+def on_client_setup(sid, data):
+    print('Client is ready for training:', sid, data)
+    
+    server.ready_clients[sid] = data['client_id']
+    # Start training if enough clients have joined
+    if len(server.clients) >= server.num_clients and len(server.ready_clients) >= server.num_clients and server._round == 0:
+        sorted_items = sorted(server.clients.items(), key=lambda item: item[1]['client_id'])
+        server.clients = OrderedDict(sorted_items)
+        fit_one_round()
+    
+@sio.on('client_update')
+def handle_client_update(sid, data):
+    print(f"[Server] Received update from client {sid} for round {server._round}")
+    if sid in server.selected_clients:
+        # Deserialize client model update
+        client_model_update = deserialize_tensor_dict(data['model_update'])
+        data['model_update'] = client_model_update
+        # Move tensors to the appropriate device
+        for key in client_model_update:
+            client_model_update[key] = client_model_update[key].to(server.device)
+        # Store the client update
+        server.selected_clients[sid] = data
+        
+        wandb.log({f'client_{data["client_id"]}_loss': data["loss"], f'client_{data["client_id"]}_accuracy': data["accuracy"]}, step=data["round"])
+        
+        # If all selected clients have sent updates, aggregate
+        if all(server.selected_clients.values()):
+            server.aggregate_updates()
+            server.evaluate()
+            # Clear selected clients for next round
+            server.selected_clients.clear()
+            
+            # Start next round
+            fit_one_round()
+    else:
+        print(f"[Server] Ignoring update from unselected client {sid}")
+
+
+if __name__ == '__main__':
+    args = parse_server_args()
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    
+    args.run_id = '{}_{}_[{}]_[{}_{}]_[{}]_[{}_{}]_{}'.format('FL', datetime.now(tz=tz.gettz()).strftime("%Y-%m-%d-%H-%M"), args.backbone,
+                                                args.start_round, args.rounds, args.client_fraction, args.train_split, args.train_set, args.seed)
+    out_path = Path(args.out_path) / args.project / args.run_id
+    args.out_path = str(out_path)
+    os.makedirs(args.out_path, exist_ok=True)
+        
+    args.weight_path = str(out_path / 'server' / 'checkpoints')
+    args.log_path = str(out_path / 'server' / 'logs')
+    os.makedirs(args.weight_path, exist_ok=True)
+    os.makedirs(args.log_path, exist_ok=True)
+    
+    wandb.init(entity='ssu', project=args.project, dir='wandb')
+    print('wandb.config:', wandb.config)
+    for key, value in wandb.config.items():
+        if hasattr(args, key):
+            setattr(args, key, value)
+    
+    wandb.run.name = args.run_id
+    
+    sys.stdout = Logger(os.path.join(args.log_path, args.run_id + '.txt'))
+    print(' '.join(sys.argv))
+    
+    args.n_client= len(args.datasets)
+    print("\n[WELCOME] Unfolding configurations...!")
+    server = Server(args)
+    server.setup()
+    server.transmit_model(sio)
+    
+    
+    import eventlet
+    print("[Server] Starting server...")
+    
+    # Start the server in a greenlet
+    server_greenlet = eventlet.spawn(eventlet.wsgi.server, eventlet.listen((args.host, args.port)), app)
+    
+    # Main loop to monitor server status
+    try:
+        while not getattr(server, 'stop_server', False):
+            eventlet.sleep(1)  # Yield control to allow server to process events
+    except KeyboardInterrupt:
+        print("\n[Server] Interrupt received. Shutting down...")
+    finally:
+        server_greenlet.kill()  # Stop the server greenlet
+        print("[Server] Server stopped.")
+
+#########################################################################################
+# client_socket.py
+import os
+import sys
+import wandb
+import socketio
+import torch
+import argparse
+import random
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+
+from src.models import TwoNN
+from src.utils import Logger, create_datasets, deserialize_model, serialize_tensor_dict, Config, get_system_resources
+from src.client import Client
+
+torch.manual_seed(0)
+np.random.seed(0)
+random.seed(0)
+torch.cuda.empty_cache()
+
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+torch.use_deterministic_algorithms(False)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+executor = ThreadPoolExecutor(max_workers=1)
+
+# Initialize Socket.IO client
+sio = socketio.Client()
+
+@sio.event
+def connect():
+    print(f'[Client({client_id})] Connected to server')
+    data = get_system_resources()
+    data["client_id"] = client_id
+    # Request to join federation
+    sio.emit('join_request', data=data)
+
+@sio.event
+def disconnect(reason=None):
+    print(f'[Client({client_id})] Disconnected: {reason}')
+    
+@sio.on('join_ack')
+def on_join_ack(data):
+    global client_cfg
+    print(f'[Client({client_id})] Received acknowledgment from server:', data)
+    
+    try:
+        assert 'dataset_name' in data and 'min_free_memory' in data
+        client_cfg = Config(**data)
+    except (AssertionError, TypeError) as e:
+        print(f"[Client({client_id})] Invalid join_ack data: {e}")
+        sio.disconnect()
+        
+    client_setup(client_cfg)
+    os.makedirs(client_cfg.weight_path, exist_ok=True)
+    os.makedirs(client_cfg.log_path, exist_ok=True)
+    
+
+def client_setup(client_cfg):
+    try:
+        global client
+        train_dataset, test_dataset = create_datasets(num_clients=num_clients, dataset_name=client_cfg.dataset_name)
+        
+        #torch.cuda.set_device(0)
+        device = torch.device(client_cfg.device)
+        client = Client(client_id=client_id, local_data=train_dataset, device=device)
+        client.model = TwoNN()
+        client.setup(client_config=client_cfg)
+        
+        sio.emit('client_setup', data={"client_id": client_id})
+        print(f"[Client({client.id})] ✅ Client setup completed.")
+    except Exception as e:
+        print(f"[Client({client_id})] ❌ Setup failed: {e}")
+        sio.emit('client_error', {'client_id': client_id, 'error': str(e)})
+
+@sio.on('model')
+def on_model(data, ack=None):
+    """Acknowledge model receipt after validation."""
+    print(f'[Client({client.id})] Received model from server')
+    try:
+        # Deserialize the model
+        print(f'[Client({client.id})] Deserializing model')
+        state_dict = deserialize_model(data)
+        print(f'[Client({client.id})] Loading model state_dict')
+        client.model.load_state_dict(state_dict)
+        # Store the initial state_dict for computing updates
+        client.initial_state_dict = {key: value.clone() for key, value in state_dict.items()}
+        
+        print(f"[Client({client.id})] ✅ Model loaded successfully.")
+        if ack:  # Send ACK only if the server expects it
+            ack()
+    except Exception as e:
+        print(f"[Client({client.id})] Model load failed: {e}")
+        if ack:  # Check if acknowledgment is expected
+            ack({"error": str(e)})
+        else:
+            sio.emit('client_error', {'client_id': client.id, 'error': str(e)})
+
+@sio.on('client_update')
+def on_client_update(data):
+    def _process_update():
+        try:
+            round = data['round']
+            client.client_update(round=round)
+            print(f'[Client({client.id})] Local training complete')
+            test_loss, test_accuracy = client.client_evaluate(round=round)
+            print(f'[Client({client.id})] Local evaluation complete')
+
+            # Compute model update
+            model_update = client.compute_model_update()
+            # Ensure tensors are on CPU before serialization
+            for key in model_update:
+                model_update[key] = model_update[key].to('cpu')
+            # Serialize model update
+            update_data = serialize_tensor_dict(model_update)
+            
+            payload = {
+                'client_id': client.id,
+                'round': round,
+                'dataset_size': len(client),
+                'model_update': update_data,
+                'loss': test_loss,
+                'accuracy': test_accuracy,
+            }
+            
+            sio.emit('client_update', data=payload)
+            print(f'[Client({client.id})] ✅ Sent updated model to server')
+        except Exception as e:
+            print(f"[Client({client.id})] ❌ Error in client_update: {e}")
+            sio.emit('client_error', {'client_id': client.id, 'error': str(e)})
+    executor.submit(_process_update)
+
+@sio.on('client_evaluate') 
+def on_client_evaluate(data):
+    try:
+        round = data['round']
+        test_loss, test_accuracy = client.client_evaluate(round=round)
+        print(f'[Client({client.id})] Local evaluation complete')
+        payload = {
+            'client_id': client.id,
+            'round': round,
+            'loss': test_loss,
+            'accuracy': test_accuracy,
+        }
+        sio.emit('client_evaluate', data=payload)
+        print(f'[Client({client.id})] ✅ Sent eval metrices to server')
+    except Exception as e:
+        print(f"[Client({client.id})] ❌ Error in client_update: {e}")
+        sio.emit('client_error', {'client_id': client.id, 'error': str(e)})
+
+@sio.on('training_complete')
+def on_training_complete():
+    print(f'[Client({client.id})] ✅ Training complete. Disconnecting...')
+    # Perform any cleanup if necessary
+    sio.disconnect()
+    
+        
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--host', type=str, default='dilab2.ssu.ac.kr', help='host')
+    parser.add_argument('--port', type=int, default=5001, help='port')
+    parser.add_argument('--client_id', type=int, default=0, help='Client ID')
+    parser.add_argument('--num_clients', type=int, default=2, help='Total number of clients')
+    parser.add_argument('--seed', type=int, default=101,
+                    help='Specify the initial random seed (default: 101).')
+    args = parser.parse_args()
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    
+    client_id = args.client_id
+    num_clients = args.num_clients
+    
+    # Connect to server
+    try:
+        sio.connect(f'http://{args.host}:{args.port}', wait_timeout=10, transports=['websocket'])
+        sio.wait()  # Use built-in event loop
+    except socketio.exceptions.ConnectionError:
+        print(f'[Client({client_id})] Connection to server failed.')
+    finally:
+        print(f'[Client({client_id})] Client has disconnected. Exiting...')
+        sys.exit(0)
+        
+
+Central Server: Coordinates the learning process. It maintains a "global model."
+Clients: Each client has its own local dataset. They train the global model on their local data without sharing the data itself. They send only model updates (weight changes) back to the server.
+
+Commination steps:
+1. Client sends a join_request to the server, including its client_id and system information.
+2. Server response to the client with config data(e.g. a dictonary with key and values)
+3. Client sends a mesage to the server with its client_id that he is ready for training and waiting for server message to start training.
+
+Server wait till all clients joined. After all clients joins
+4. The server select 50 percent clients out of all joined clients randomly. 
+5. The server sends a message to all selected joined clients to start training and sends it's updates
+6. The client fetch the server global model or send a get request to receive the global class 
+7. Client perform few round of local training and sends the model updates to the server.
+8. The Server wait till it reveives all selected client updates and the aggregate the updates to create new global model. 
+The server repeat steps 4-8  for n(e.g. 10) number of rounds
