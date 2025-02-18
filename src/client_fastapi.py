@@ -22,9 +22,10 @@ def generate_dummy_data(num_samples: int = 100):
 
 # --- Client Class ---
 class FederatedClient:
-    def __init__(self, client_id: int, server_url: str):
+    def __init__(self, client_id: int, host: str, port: int):
         print("Initializing FederatedClient")
-        self.server_url = server_url
+        self.host = host
+        self.port = port
         self.client_id = client_id # str(uuid.uuid4())
         self.websocket: websockets.WebSocketClientProtocol | None = None # Store the WebSocket
 
@@ -32,7 +33,7 @@ class FederatedClient:
         """Connects to the server and handles the main client logic."""
         print("Entering connect()")
         try:
-            async with websockets.connect(f"{self.server_url}/{self.client_id}", ping_interval=60, ping_timeout=60) as websocket:
+            async with websockets.connect(f"ws://{self.host}:{self.port}/ws/{self.client_id}", ping_interval=60, ping_timeout=60) as websocket:
                 self.websocket = websocket
                 print("Connected to server")
                 await self.send_join_request()
@@ -113,7 +114,7 @@ class FederatedClient:
     async def get_global_model(self):
         print("Requesting global model")
         async with httpx.AsyncClient() as client:
-            url = f"http://localhost:8008/get_global_model"  
+            url = f"http://{self.host}:{self.port}/get_global_model"  
             response = await client.get(url)
             if response.status_code == 200:
                 model_data = response.json()
@@ -160,7 +161,7 @@ async def main_client():
     random.seed(args.seed)
     
     print("Staring main client")
-    client = FederatedClient(args.client_id ,server_url=f"ws://{args.host}:{args.port}/ws")
+    client = FederatedClient(args.client_id, host=args.host, port=args.port)
     await client.connect()
 
 if __name__ == "__main__":

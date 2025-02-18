@@ -17,7 +17,7 @@ def parse_server_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--host', type=str, default='dilab2.ssu.ac.kr', help='host')
     parser.add_argument('--port', type=int, default=5001, help='port')
-    parser.add_argument("-d", "--datasets", type=str, nargs='+', default=["MNIST", "EMNIST", "KMNIST", "QMNIST"], # , "FakeData", "FakeData"
+    parser.add_argument("-d", "--datasets", type=str, nargs='+', default=["MNIST", "EMNIST", "KMNIST", "QMNIST", "FakeData", "FakeData"], # , "FakeData", "FakeData"
                             help='Specify the datasets.')
     parser.add_argument("-p", "--project", type=str, default="MTL_CL_TASK", help = "Project name")
     parser.add_argument("-c", "--client_fraction", type=float, default=1.0, help = "client fraction")
